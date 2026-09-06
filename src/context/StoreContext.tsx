@@ -125,11 +125,41 @@ const LOCAL_STORAGE_KEYS = {
   CATEGORIES: 'easyorder_categories_v2_spice',
   CART: 'easyorder_cart_v2_spice',
   ORDERS: 'easyorder_orders_v2_spice',
+  ORDERS_BACKUP: 'aranayak_orders_permanent_backup_v1',
   INVENTORY_LOGS: 'easyorder_inv_logs_v2_spice',
   SETTINGS: 'easyorder_settings_v2_spice',
   ADMIN_SESSION: 'easyorder_admin_session_v1',
   ADMIN_PIN: 'easyorder_admin_pin_v1'
 };
+
+/**
+ * Safely retrieves any saved orders across current keys, permanent backup,
+ * and legacy storage keys so orders are never lost across reloads/updates.
+ */
+function getLocalOrders(): Order[] {
+  try {
+    const keysToCheck = [
+      LOCAL_STORAGE_KEYS.ORDERS,
+      LOCAL_STORAGE_KEYS.ORDERS_BACKUP,
+      'easyorder_orders_v1',
+      'easyorder_orders'
+    ];
+
+    for (const key of keysToCheck) {
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    }
+    return [];
+  } catch (err) {
+    console.warn('Error reading stored orders:', err);
+    return [];
+  }
+}
 
 /**
  * Safely retrieves any saved products across current keys, permanent backup,
@@ -231,12 +261,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   });
 
   const [orders, setOrders] = useState<Order[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEYS.ORDERS);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
+    return getLocalOrders();
   });
 
   const [inventoryLogs, setInventoryLogs] = useState<InventoryLog[]>(() => {
@@ -450,14 +475,69 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           console.warn('Categories Firestore snapshot error:', err);
         });
 
-        // 3. Subscribe to Orders
-        unsubscribeOrders = onSnapshot(ordersCol, (snapshot) => {
-          const orderList: Order[] = [];
+        // 3. Subscribe to Orders with Anti-Loss Cloud & Local Merge
+        unsubscribeOrders = onSnapshot(ordersCol, async (snapshot) => {
+          const remoteList: Order[] = [];
           snapshot.forEach(docSnap => {
-            orderList.push(docSnap.data() as Order);
+            remoteList.push(docSnap.data() as Order);
           });
-          orderList.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-          setOrders(orderList);
+
+          const localOrders = getLocalOrders();
+
+          // Case A: Cloud is empty, but local device has saved orders!
+          if (snapshot.empty && localOrders.length > 0) {
+            console.log(`Cloud orders list is empty. Preserving ${localOrders.length} local orders and uploading to cloud...`);
+            setOrders(localOrders);
+            try {
+              const batch = writeBatch(db);
+              localOrders.forEach(lo => {
+                const oRef = doc(db, 'orders', lo.id);
+                batch.set(oRef, sanitizeForFirestore(lo));
+              });
+              await batch.commit();
+            } catch (err) {
+              console.warn('Error auto-syncing local orders to cloud:', err);
+            }
+            return;
+          }
+
+          // Case B: Cloud has orders. Merge any local un-synced orders
+          const orderMap = new Map<string, Order>();
+          remoteList.forEach(o => orderMap.set(o.id, o));
+
+          const unSyncedToCloud: Order[] = [];
+          localOrders.forEach(lo => {
+            if (!orderMap.has(lo.id)) {
+              orderMap.set(lo.id, lo);
+              unSyncedToCloud.push(lo);
+            }
+          });
+
+          if (unSyncedToCloud.length > 0) {
+            try {
+              const batch = writeBatch(db);
+              unSyncedToCloud.forEach(uo => {
+                const oRef = doc(db, 'orders', uo.id);
+                batch.set(oRef, sanitizeForFirestore(uo));
+              });
+              await batch.commit();
+            } catch (err) {
+              console.warn('Error uploading un-synced orders to cloud:', err);
+            }
+          }
+
+          const finalList = Array.from(orderMap.values());
+          finalList.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+          setOrders(finalList);
+
+          try {
+            localStorage.setItem(LOCAL_STORAGE_KEYS.ORDERS, JSON.stringify(finalList));
+            if (finalList.length > 0) {
+              localStorage.setItem(LOCAL_STORAGE_KEYS.ORDERS_BACKUP, JSON.stringify(finalList));
+            }
+          } catch (e) {
+            console.warn(e);
+          }
         }, (err) => {
           console.warn('Orders Firestore snapshot error:', err);
         });
@@ -516,6 +596,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       localStorage.setItem(LOCAL_STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
       localStorage.setItem(LOCAL_STORAGE_KEYS.CART, JSON.stringify(cart));
       localStorage.setItem(LOCAL_STORAGE_KEYS.ORDERS, JSON.stringify(orders));
+      if (orders.length > 0) {
+        localStorage.setItem(LOCAL_STORAGE_KEYS.ORDERS_BACKUP, JSON.stringify(orders));
+      }
       localStorage.setItem(LOCAL_STORAGE_KEYS.INVENTORY_LOGS, JSON.stringify(inventoryLogs));
       localStorage.setItem(LOCAL_STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
       localStorage.setItem(LOCAL_STORAGE_KEYS.ADMIN_PIN, adminPin);
@@ -1214,16 +1297,26 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       })
     );
 
-    // Save Order to Firestore and Local State
+    // Save Order to Firestore (sanitized to remove any undefined fields) and Local State
     try {
+      const sanitizedOrder = sanitizeForFirestore(newOrder);
       const orderRef = doc(db, 'orders', newOrder.id);
-      setDoc(orderRef, newOrder).catch(err => console.warn('Firestore setDoc order failed:', err));
+      setDoc(orderRef, sanitizedOrder).catch(err => console.warn('Firestore setDoc order failed:', err));
     } catch (err) {
       console.warn('Firebase order save error:', err);
     }
 
     setInventoryLogs(logs => [...newLogs, ...logs]);
-    setOrders(prev => [newOrder, ...prev]);
+    setOrders(prev => {
+      const next = [newOrder, ...prev];
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEYS.ORDERS, JSON.stringify(next));
+        localStorage.setItem(LOCAL_STORAGE_KEYS.ORDERS_BACKUP, JSON.stringify(next));
+      } catch (e) {
+        console.warn(e);
+      }
+      return next;
+    });
     setActiveOrderNumber(orderNumber);
     clearCart();
 
@@ -1236,6 +1329,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   // Order Status update & Automated Restock Refund on Cancel (Writes to Firestore)
   const updateOrderStatus = useCallback((orderId: string, newStatus: OrderStatus) => {
+    const nowIso = new Date().toISOString();
+
     setOrders(prevOrders => {
       const order = prevOrders.find(o => o.id === orderId);
       if (!order) return prevOrders;
@@ -1272,7 +1367,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
               const logItem: InventoryLog = {
                 id: `log-refund-${Date.now()}-${p.id}`,
-                timestamp: new Date().toISOString(),
+                timestamp: nowIso,
                 productId: p.id,
                 productName: p.name,
                 changeType: 'order_cancellation_refund',
@@ -1293,7 +1388,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 }).catch(err => console.warn(err));
 
                 const logRef = doc(db, 'stockLogs', logItem.id);
-                setDoc(logRef, logItem).catch(err => console.warn(err));
+                setDoc(logRef, sanitizeForFirestore(logItem)).catch(err => console.warn(err));
               } catch (err) {
                 console.warn(err);
               }
@@ -1311,15 +1406,44 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setInventoryLogs(logs => [...refundLogs, ...logs]);
       }
 
+      // Record completedAt timestamp if transitioning to 'completed'
+      const updatedCompletedAt = newStatus === 'completed'
+        ? (order.completedAt || nowIso)
+        : (newStatus === 'cancelled' ? order.completedAt : undefined);
+
+      const updatedOrders = prevOrders.map(o => {
+        if (o.id === orderId) {
+          return {
+            ...o,
+            status: newStatus,
+            completedAt: updatedCompletedAt
+          };
+        }
+        return o;
+      });
+
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEYS.ORDERS, JSON.stringify(updatedOrders));
+        if (updatedOrders.length > 0) {
+          localStorage.setItem(LOCAL_STORAGE_KEYS.ORDERS_BACKUP, JSON.stringify(updatedOrders));
+        }
+      } catch (e) {
+        console.warn(e);
+      }
+
       // Update Order in Firestore
       try {
         const orderRef = doc(db, 'orders', orderId);
-        updateDoc(orderRef, { status: newStatus }).catch(err => console.warn(err));
+        const updates: Record<string, any> = { status: newStatus };
+        if (updatedCompletedAt) {
+          updates.completedAt = updatedCompletedAt;
+        }
+        updateDoc(orderRef, updates).catch(err => console.warn('Firestore updateOrderStatus failed:', err));
       } catch (err) {
         console.warn(err);
       }
 
-      return prevOrders.map(o => o.id === orderId ? { ...o, status: newStatus } : o);
+      return updatedOrders;
     });
   }, []);
 

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { generateWhatsAppOrderText, openWhatsAppChat } from '../utils/whatsapp';
+import { formatOrderDateTime } from '../utils/dateFormatter';
 
 interface OrderConfirmationModalProps {
   orderNumber: string | null;
@@ -95,6 +96,17 @@ export const OrderConfirmationModal: React.FC<OrderConfirmationModalProps> = ({ 
 
         {/* Receipt Details Body */}
         <div className="p-4 sm:p-5 space-y-4 flex-1 overflow-y-auto print:max-h-none">
+          {/* Order Placement Time */}
+          <div className="flex items-center justify-between text-xs bg-amber-50/80 border border-amber-200/60 rounded-xl px-3 py-2 text-amber-900">
+            <div className="flex items-center gap-1.5 font-semibold">
+              <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span>অর্ডার করার সময়:</span>
+            </div>
+            <span className="font-bold font-mono text-[11px] text-slate-800">
+              {formatOrderDateTime(order.createdAt)}
+            </span>
+          </div>
+
           {/* Order Meta Info */}
           <div className="flex items-center justify-between text-xs bg-slate-50 p-3 rounded-xl border border-slate-200/80">
             <div>

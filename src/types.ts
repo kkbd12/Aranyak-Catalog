@@ -62,6 +62,7 @@ export interface Order {
   id: string;
   orderNumber: string;
   createdAt: string;
+  completedAt?: string;
   customerName: string;
   customerPhone: string;
   orderType: OrderType;
