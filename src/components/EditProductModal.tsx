@@ -14,6 +14,7 @@ import {
 import { useStore } from '../context/StoreContext';
 import { Product, ProductVariant } from '../types';
 import { ProductVariantEditor } from './ProductVariantEditor';
+import { optimizeProductImage } from '../utils/imageOptimizer';
 
 interface EditProductModalProps {
   product: Product | null;
@@ -468,16 +469,23 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({ product, isO
                 <input
                   type="file"
                   accept="image/*"
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = (event) => {
-                      const dataUrl = event.target?.result as string;
-                      setImage(dataUrl);
+                    try {
+                      const optimizedUrl = await optimizeProductImage(file);
+                      setImage(optimizedUrl);
                       setCustomImageUrl('');
-                    };
-                    reader.readAsDataURL(file);
+                    } catch (err) {
+                      console.warn('Image optimization fallback in EditModal:', err);
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        const dataUrl = event.target?.result as string;
+                        setImage(dataUrl);
+                        setCustomImageUrl('');
+                      };
+                      reader.readAsDataURL(file);
+                    }
                   }}
                   className="hidden"
                 />

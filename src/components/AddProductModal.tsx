@@ -13,6 +13,7 @@ import {
 import { useStore } from '../context/StoreContext';
 import { ProductVariant } from '../types';
 import { ProductVariantEditor } from './ProductVariantEditor';
+import { optimizeProductImage } from '../utils/imageOptimizer';
 
 export const AddProductModal: React.FC = () => {
   const { 
@@ -91,22 +92,27 @@ export const AddProductModal: React.FC = () => {
   if (!isAddProductOpen) return null;
 
   // Handle local image file upload & optimize
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setIsProcessingImage(true);
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      setImage(dataUrl);
+    try {
+      setIsProcessingImage(true);
+      const optimizedUrl = await optimizeProductImage(file);
+      setImage(optimizedUrl);
       setCustomImageUrl('');
+    } catch (err) {
+      console.warn('Image optimization fallback:', err);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        setImage(dataUrl);
+        setCustomImageUrl('');
+      };
+      reader.readAsDataURL(file);
+    } finally {
       setIsProcessingImage(false);
-    };
-    reader.onerror = () => {
-      setIsProcessingImage(false);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {

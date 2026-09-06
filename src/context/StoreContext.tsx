@@ -14,6 +14,7 @@ import {
 import { INITIAL_CATEGORIES, INITIAL_PRODUCTS, INITIAL_SETTINGS } from '../data/initialData';
 import { playAddToCartSound, playRemoveSound, playOrderSuccessSound } from '../utils/audio';
 import { db } from '../lib/firebase';
+import { sanitizeForFirestore } from '../utils/firestoreSanitizer';
 import { 
   collection, 
   doc, 
@@ -120,6 +121,7 @@ const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_KEYS = {
   PRODUCTS: 'easyorder_products_v2_spice',
+  PERMANENT_BACKUP: 'aranayak_products_permanent_backup_v1',
   CATEGORIES: 'easyorder_categories_v2_spice',
   CART: 'easyorder_cart_v2_spice',
   ORDERS: 'easyorder_orders_v2_spice',
@@ -128,6 +130,39 @@ const LOCAL_STORAGE_KEYS = {
   ADMIN_SESSION: 'easyorder_admin_session_v1',
   ADMIN_PIN: 'easyorder_admin_pin_v1'
 };
+
+/**
+ * Safely retrieves any saved products across current keys, permanent backup,
+ * and legacy storage keys so user data is never lost across reloads/updates.
+ */
+function getLocalProducts(): Product[] {
+  try {
+    const keysToCheck = [
+      LOCAL_STORAGE_KEYS.PRODUCTS,
+      LOCAL_STORAGE_KEYS.PERMANENT_BACKUP,
+      'easyorder_products_v1',
+      'easyorder_products'
+    ];
+
+    for (const key of keysToCheck) {
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Exclude any old demo products from earlier versions if present
+          const nonLegacy = parsed.filter((p: any) => p && p.id && !/^p-(?:[1-9]|1\d|2[0-5])$/.test(p.id));
+          if (nonLegacy.length > 0) {
+            return nonLegacy;
+          }
+        }
+      }
+    }
+    return INITIAL_PRODUCTS;
+  } catch (err) {
+    console.warn('Error reading stored products:', err);
+    return INITIAL_PRODUCTS;
+  }
+}
 
 const DEFAULT_ADMIN_PIN = '1234';
 
@@ -153,22 +188,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   });
 
-  // Local state with fallback (starts empty so user can start fresh)
+  // Local state initialized with safe multi-key fallback
   const [products, setProducts] = useState<Product[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEYS.PRODUCTS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          // Filter out legacy hardcoded demo IDs (p-1 to p-25)
-          const nonLegacy = parsed.filter((p: any) => !/^p-(?:[1-9]|1\d|2[0-5])$/.test(p.id));
-          return nonLegacy;
-        }
-      }
-      return INITIAL_PRODUCTS;
-    } catch {
-      return INITIAL_PRODUCTS;
-    }
+    return getLocalProducts();
   });
 
   const [categories, setCategories] = useState<Category[]>(() => {
@@ -347,15 +369,65 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           await batch.commit();
         }
 
-        // 1. Subscribe to Products
-        unsubscribeProducts = onSnapshot(productsCol, (snapshot) => {
-          const list: Product[] = [];
+        // 1. Subscribe to Products with Anti-Loss Cloud & Local Merge
+        unsubscribeProducts = onSnapshot(productsCol, async (snapshot) => {
+          const remoteList: Product[] = [];
           snapshot.forEach(docSnap => {
-            list.push(docSnap.data() as Product);
+            remoteList.push(docSnap.data() as Product);
           });
+
+          // Check if local cache has products
+          const localProducts = getLocalProducts();
+
+          // Case A: Cloud is empty (e.g. newly provisioned / reconnected), but user uploaded products locally!
+          if (snapshot.empty && localProducts.length > 0) {
+            console.log(`Cloud product catalog is currently empty. Preserving ${localProducts.length} local products and syncing to cloud database...`);
+            setProducts(localProducts);
+            try {
+              const batch = writeBatch(db);
+              localProducts.forEach(lp => {
+                const pRef = doc(db, 'products', lp.id);
+                batch.set(pRef, sanitizeForFirestore(lp));
+              });
+              await batch.commit();
+            } catch (err) {
+              console.warn('Error auto-syncing local products to cloud:', err);
+            }
+            setIsCloudConnected(true);
+            setIsSyncing(false);
+            return;
+          }
+
+          // Case B: Cloud has products. Check for any un-synced products saved locally on this device
+          const productMap = new Map<string, Product>();
+          remoteList.forEach(p => productMap.set(p.id, p));
+
+          const unSyncedToCloud: Product[] = [];
+          localProducts.forEach(lp => {
+            if (!productMap.has(lp.id)) {
+              productMap.set(lp.id, lp);
+              unSyncedToCloud.push(lp);
+            }
+          });
+
+          if (unSyncedToCloud.length > 0) {
+            console.log(`Syncing ${unSyncedToCloud.length} local products to cloud database...`);
+            try {
+              const batch = writeBatch(db);
+              unSyncedToCloud.forEach(up => {
+                const pRef = doc(db, 'products', up.id);
+                batch.set(pRef, sanitizeForFirestore(up));
+              });
+              await batch.commit();
+            } catch (err) {
+              console.warn('Error uploading offline products to cloud:', err);
+            }
+          }
+
+          const finalList = Array.from(productMap.values());
           // Sort by order/createdAt
-          list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-          setProducts(list);
+          finalList.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+          setProducts(finalList);
           setIsCloudConnected(true);
           setIsSyncing(false);
         }, (err) => {
@@ -437,6 +509,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   useEffect(() => {
     try {
       localStorage.setItem(LOCAL_STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+      // Always maintain a permanent backup that is NEVER wiped out by an empty list
+      if (products.length > 0) {
+        localStorage.setItem(LOCAL_STORAGE_KEYS.PERMANENT_BACKUP, JSON.stringify(products));
+      }
       localStorage.setItem(LOCAL_STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
       localStorage.setItem(LOCAL_STORAGE_KEYS.CART, JSON.stringify(cart));
       localStorage.setItem(LOCAL_STORAGE_KEYS.ORDERS, JSON.stringify(orders));
@@ -651,12 +727,24 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       createdAt: new Date().toISOString(),
     };
 
-    setProducts(prev => [newProduct, ...prev]);
+    setProducts(prev => {
+      const next = [newProduct, ...prev];
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEYS.PRODUCTS, JSON.stringify(next));
+        localStorage.setItem(LOCAL_STORAGE_KEYS.PERMANENT_BACKUP, JSON.stringify(next));
+      } catch (e) {
+        console.warn('LocalStorage save error:', e);
+      }
+      return next;
+    });
 
-    // Write to Firestore
+    // Write to Firestore with sanitized payload (strips any undefined fields)
     try {
+      const sanitized = sanitizeForFirestore(newProduct);
       const prodRef = doc(db, 'products', newProduct.id);
-      setDoc(prodRef, newProduct).catch(err => console.warn('Firestore setDoc product failed:', err));
+      setDoc(prodRef, sanitized).catch(err => {
+        console.warn('Firestore setDoc product failed:', err);
+      });
     } catch (err) {
       console.warn('Firebase error:', err);
     }
@@ -676,7 +764,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setInventoryLogs(prev => [log, ...prev]);
     try {
       const logRef = doc(db, 'stockLogs', log.id);
-      setDoc(logRef, log).catch(err => console.warn(err));
+      setDoc(logRef, sanitizeForFirestore(log)).catch(err => console.warn(err));
     } catch (err) {
       console.warn(err);
     }
@@ -685,19 +773,29 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, []);
 
   const updateProduct = useCallback((id: string, updates: Partial<Product>) => {
-    setProducts(prev =>
-      prev.map(p => {
+    setProducts(prev => {
+      const next = prev.map(p => {
         if (p.id === id) {
           const updated = { ...p, ...updates };
           return updated;
         }
         return p;
-      })
-    );
+      });
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEYS.PRODUCTS, JSON.stringify(next));
+        localStorage.setItem(LOCAL_STORAGE_KEYS.PERMANENT_BACKUP, JSON.stringify(next));
+      } catch (e) {
+        console.warn('LocalStorage save error:', e);
+      }
+      return next;
+    });
 
     try {
+      const sanitizedUpdates = sanitizeForFirestore(updates);
       const prodRef = doc(db, 'products', id);
-      updateDoc(prodRef, updates).catch(err => console.warn('Firestore updateDoc failed:', err));
+      updateDoc(prodRef, sanitizedUpdates).catch(err => {
+        console.warn('Firestore updateDoc failed:', err);
+      });
     } catch (err) {
       console.warn('Firebase updateDoc error:', err);
     }
@@ -708,6 +806,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const next = prev.filter(p => p.id !== id);
       try {
         localStorage.setItem(LOCAL_STORAGE_KEYS.PRODUCTS, JSON.stringify(next));
+        if (next.length > 0) {
+          localStorage.setItem(LOCAL_STORAGE_KEYS.PERMANENT_BACKUP, JSON.stringify(next));
+        }
       } catch (e) {
         console.warn(e);
       }
@@ -730,6 +831,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const next = prev.filter(p => !idSet.has(p.id));
       try {
         localStorage.setItem(LOCAL_STORAGE_KEYS.PRODUCTS, JSON.stringify(next));
+        if (next.length > 0) {
+          localStorage.setItem(LOCAL_STORAGE_KEYS.PERMANENT_BACKUP, JSON.stringify(next));
+        }
       } catch (e) {
         console.warn(e);
       }
@@ -1241,6 +1345,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setOrders([]);
     setInventoryLogs([]);
     localStorage.removeItem(LOCAL_STORAGE_KEYS.PRODUCTS);
+    localStorage.removeItem(LOCAL_STORAGE_KEYS.PERMANENT_BACKUP);
     localStorage.removeItem(LOCAL_STORAGE_KEYS.CATEGORIES);
     localStorage.removeItem(LOCAL_STORAGE_KEYS.CART);
     localStorage.removeItem(LOCAL_STORAGE_KEYS.ORDERS);
