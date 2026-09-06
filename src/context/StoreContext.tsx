@@ -22,6 +22,7 @@ import {
   deleteDoc, 
   onSnapshot, 
   getDocs,
+  getDoc,
   writeBatch
 } from 'firebase/firestore';
 
@@ -71,6 +72,8 @@ interface StoreContextType {
   setIsCheckoutOpen: (open: boolean) => void;
   setIsAddProductOpen: (open: boolean) => void;
   setIsSettingsOpen: (open: boolean) => void;
+  isCategoryManagerOpen: boolean;
+  setIsCategoryManagerOpen: (open: boolean) => void;
   setTableNumber: (table: string) => void;
   setOrderType: (type: OrderType) => void;
   
@@ -86,6 +89,8 @@ interface StoreContextType {
   deleteProduct: (id: string) => void;
   deleteMultipleProducts: (ids: string[]) => void;
   addCategory: (category: { name: string; nameBn?: string; icon: string }) => Category;
+  updateCategory: (id: string, updates: Partial<Category>) => void;
+  deleteCategory: (id: string) => void;
   
   // Inventory Automated Actions
   adjustStock: (productId: string, deltaQuantity: number, note?: string) => void;
@@ -148,11 +153,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   });
 
-  // Local state with fallback
+  // Local state with fallback (starts empty so user can start fresh)
   const [products, setProducts] = useState<Product[]>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEYS.PRODUCTS);
-      return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          // Filter out legacy hardcoded demo IDs (p-1 to p-25)
+          const nonLegacy = parsed.filter((p: any) => !/^p-(?:[1-9]|1\d|2[0-5])$/.test(p.id));
+          return nonLegacy;
+        }
+      }
+      return INITIAL_PRODUCTS;
     } catch {
       return INITIAL_PRODUCTS;
     }
@@ -238,15 +251,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [isCheckoutOpen, setIsCheckoutOpen] = useState<boolean>(false);
   const [isAddProductOpen, setIsAddProductOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState<boolean>(false);
   const [activeOrderNumber, setActiveOrderNumber] = useState<string | null>(null);
   const [tableNumber, setTableNumber] = useState<string>('Parcel');
   const [orderType, setOrderType] = useState<OrderType>('delivery');
 
-  // Dynamic Title & Favicon Sync
+  // Dynamic Title, Favicon & Social Meta Sync (Ensures WhatsApp, Facebook, etc. share the store logo/favicon)
   useEffect(() => {
     if (typeof document !== 'undefined') {
-      document.title = settings.storeName || 'Aranayak';
-      const iconUrl = settings.faviconUrl || settings.logoUrl || '/favicon.svg';
+      const siteTitle = settings.storeName || 'Aranayak';
+      document.title = siteTitle;
+      const iconUrl = settings.faviconUrl || settings.logoUrl || '/favicon.png';
       const iconLinks = document.querySelectorAll("link[rel*='icon'], link[rel='apple-touch-icon']");
       if (iconLinks.length > 0) {
         iconLinks.forEach(link => {
@@ -258,8 +273,41 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         link.href = iconUrl;
         document.head.appendChild(link);
       }
+
+      // Compute full absolute URL so WhatsApp/Facebook link previews always find the image
+      const absoluteIconUrl = iconUrl.startsWith('data:') || iconUrl.startsWith('http')
+        ? iconUrl
+        : `${window.location.origin}${iconUrl.startsWith('/') ? '' : '/'}${iconUrl}`;
+
+      const setMetaTag = (selector: string, attr: string, value: string) => {
+        let el = document.querySelector(selector);
+        if (!el) {
+          el = document.createElement('meta');
+          const cleanSelector = selector.replace('meta[', '').replace(']', '');
+          const [key, val] = cleanSelector.split('=');
+          if (key && val) {
+            el.setAttribute(key.trim(), val.replace(/['"]/g, '').trim());
+          }
+          document.head.appendChild(el);
+        }
+        el.setAttribute(attr, value);
+      };
+
+      // Sync Titles
+      setMetaTag("meta[property='og:title']", 'content', siteTitle);
+      setMetaTag("meta[name='twitter:title']", 'content', siteTitle);
+
+      // Sync Tagline / Description
+      const desc = settings.tagline || '১০০% খাঁটি পণ্য ও সুপার শপ';
+      setMetaTag("meta[property='og:description']", 'content', desc);
+      setMetaTag("meta[name='twitter:description']", 'content', desc);
+
+      // Sync Images for Social Share Link Previews
+      setMetaTag("meta[property='og:image']", 'content', absoluteIconUrl);
+      setMetaTag("meta[property='og:image:secure_url']", 'content', absoluteIconUrl);
+      setMetaTag("meta[name='twitter:image']", 'content', absoluteIconUrl);
     }
-  }, [settings.storeName, settings.logoUrl, settings.faviconUrl]);
+  }, [settings.storeName, settings.logoUrl, settings.faviconUrl, settings.tagline]);
 
   // --- Real-Time Firestore Sync ---
   useEffect(() => {
@@ -275,23 +323,27 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const productsCol = collection(db, 'products');
         const categoriesCol = collection(db, 'categories');
         const ordersCol = collection(db, 'orders');
-        const settingsCol = collection(db, 'settings');
         const logsCol = collection(db, 'stockLogs');
 
-        // Check if database is empty on first boot and seed if needed
-        const prodSnap = await getDocs(productsCol);
-        if (prodSnap.empty) {
+        // Check if settings exist in Firestore; if not, initialize once. Never overwrite existing saved settings!
+        const settingsRef = doc(db, 'settings', 'store_config');
+        const settingsSnap = await getDoc(settingsRef);
+        if (!settingsSnap.exists()) {
+          await setDoc(settingsRef, INITIAL_SETTINGS);
+        } else {
+          const remoteSettings = settingsSnap.data() as StoreSettings;
+          setSettings(remoteSettings);
+          localStorage.setItem(LOCAL_STORAGE_KEYS.SETTINGS, JSON.stringify(remoteSettings));
+        }
+
+        // Check if categories collection is empty on first boot
+        const catSnap = await getDocs(categoriesCol);
+        if (catSnap.empty) {
           const batch = writeBatch(db);
-          INITIAL_PRODUCTS.forEach(p => {
-            const ref = doc(db, 'products', p.id);
-            batch.set(ref, p);
-          });
           INITIAL_CATEGORIES.forEach(c => {
             const ref = doc(db, 'categories', c.id);
             batch.set(ref, c);
           });
-          const settingsRef = doc(db, 'settings', 'store_config');
-          batch.set(settingsRef, INITIAL_SETTINGS);
           await batch.commit();
         }
 
@@ -716,6 +768,27 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     return newCat;
   }, [categories.length]);
+
+  const updateCategory = useCallback((id: string, updates: Partial<Category>) => {
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+    try {
+      const catRef = doc(db, 'categories', id);
+      updateDoc(catRef, updates).catch(err => console.warn('Firestore updateCategory error:', err));
+    } catch (err) {
+      console.warn('updateCategory error:', err);
+    }
+  }, []);
+
+  const deleteCategory = useCallback((id: string) => {
+    if (id === 'all') return;
+    setCategories(prev => prev.filter(c => c.id !== id));
+    try {
+      const catRef = doc(db, 'categories', id);
+      deleteDoc(catRef).catch(err => console.warn('Firestore deleteCategory error:', err));
+    } catch (err) {
+      console.warn('deleteCategory error:', err);
+    }
+  }, []);
 
   // Automated Inventory Actions (Remote & Real-time)
   const adjustStock = useCallback((productId: string, deltaQuantity: number, note?: string) => {
@@ -1150,10 +1223,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setSettings(prev => {
       const updated = { ...prev, ...newSettings };
       try {
+        localStorage.setItem(LOCAL_STORAGE_KEYS.SETTINGS, JSON.stringify(updated));
         const settingsRef = doc(db, 'settings', 'store_config');
         setDoc(settingsRef, updated, { merge: true }).catch(err => console.warn(err));
       } catch (err) {
-        console.warn(err);
+        console.warn('updateSettings error:', err);
       }
       return updated;
     });
@@ -1234,6 +1308,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setIsCheckoutOpen,
         setIsAddProductOpen,
         setIsSettingsOpen,
+        isCategoryManagerOpen,
+        setIsCategoryManagerOpen,
         setTableNumber,
         setOrderType,
 
@@ -1247,6 +1323,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         deleteProduct,
         deleteMultipleProducts,
         addCategory,
+        updateCategory,
+        deleteCategory,
 
         adjustStock,
         adjustVariantStock,

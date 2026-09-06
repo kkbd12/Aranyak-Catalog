@@ -12,7 +12,8 @@ import {
   Lock,
   LogOut,
   Globe,
-  ShoppingCart
+  ShoppingCart,
+  FolderPlus
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { OrderType } from '../types';
@@ -24,6 +25,7 @@ export const Header: React.FC = () => {
     setActiveView, 
     setIsAddProductOpen,
     setIsSettingsOpen,
+    setIsCategoryManagerOpen,
     orderType,
     setOrderType,
     lowStockCount,
@@ -209,10 +211,21 @@ export const Header: React.FC = () => {
                 id="quick-add-product-btn"
                 onClick={() => setIsAddProductOpen(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white text-xs font-bold rounded-xl shadow-xs shadow-amber-600/20 active:scale-95 transition-all"
-                title="Easily Add New Spice or Grocery Item"
+                title="নতুন মসলা বা পণ্য যোগ করুন"
               >
                 <Plus className="w-4 h-4 stroke-[2.5]" />
-                <span className="hidden sm:inline">+ নতুন আইটেম</span>
+                <span className="hidden sm:inline">+ পণ্য যোগ</span>
+              </button>
+
+              {/* Category Management Button */}
+              <button
+                id="header-category-mgr-btn"
+                onClick={() => setIsCategoryManagerOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200/80 rounded-xl text-xs font-bold transition-all active:scale-95"
+                title="ক্যাটাগরি তৈরি, এডিট ও মুছুন"
+              >
+                <FolderPlus className="w-3.5 h-3.5 text-amber-600" />
+                <span className="hidden lg:inline">ক্যাটাগরি</span>
               </button>
 
               {/* Settings & Favicon */}

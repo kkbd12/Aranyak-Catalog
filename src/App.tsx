@@ -12,6 +12,7 @@ import { InventoryManager } from './components/InventoryManager';
 import { OrderManager } from './components/OrderManager';
 import { StoreSettingsModal } from './components/StoreSettingsModal';
 import { AdminAuthModal } from './components/AdminAuthModal';
+import { CategoryManagerModal } from './components/CategoryManagerModal';
 import { Lock, Phone, MapPin, Sparkles, ShieldCheck } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -119,6 +120,7 @@ const MainLayout: React.FC = () => {
         <ProductDetailModal />
         <AddProductModal />
         <StoreSettingsModal />
+        <CategoryManagerModal />
         <AdminAuthModal 
           isOpen={isAdminAuthOpen} 
           onClose={() => setIsAdminAuthOpen(false)} 

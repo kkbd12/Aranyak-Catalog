@@ -222,9 +222,9 @@ export const StoreSettingsModal: React.FC = () => {
 
   // Reset to default Aranayak Logo & Favicon
   const handleResetFavicon = () => {
-    setFaviconUrl('/favicon.svg');
-    setLogoUrl('/favicon.svg');
-    setUploadMessage('ডিফল্ট আরণ্যক লোগোতে রিসেট করা হয়েছে!');
+    setFaviconUrl('/favicon.png');
+    setLogoUrl('/favicon.png');
+    setUploadMessage('ডিফল্ট লোগোতে রিসেট করা হয়েছে!');
     setTimeout(() => setUploadMessage(null), 2500);
   };
 
@@ -546,6 +546,50 @@ export const StoreSettingsModal: React.FC = () => {
                     </label>
                   </div>
                 )}
+              </div>
+
+              {/* WhatsApp / Social Share Link Preview */}
+              <div className="p-3.5 bg-gradient-to-br from-emerald-50/60 to-slate-50 border border-emerald-200/80 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                    <span className="text-base leading-none">💬</span>
+                    <span>WhatsApp ও সোশ্যাল শেয়ার প্রিভিউ (Link Preview)</span>
+                  </span>
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                    Active OpenGraph
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-600">
+                  গ্রাহকদের WhatsApp, Facebook বা Messenger এ লিংক পাঠালে নিচের প্রিভিউ কার্ডটি দেখাবে:
+                </p>
+
+                {/* Simulated WhatsApp Bubble */}
+                <div className="bg-[#e2f7cb]/70 border border-emerald-300/80 p-2.5 rounded-xl shadow-2xs max-w-sm">
+                  <div className="bg-white rounded-lg overflow-hidden border border-emerald-200/60 shadow-xs">
+                    <div className="w-full h-36 bg-slate-100 flex items-center justify-center p-3">
+                      <img 
+                        src={faviconUrl || '/og-image.png'} 
+                        alt="Share Preview" 
+                        className="max-h-full max-w-full object-contain rounded-lg"
+                      />
+                    </div>
+                    <div className="p-2.5 bg-slate-50 border-t border-slate-100">
+                      <p className="text-xs font-bold text-slate-900 line-clamp-1">{storeName || 'Aranayak'}</p>
+                      <p className="text-[10px] text-slate-500 line-clamp-2 mt-0.5 leading-tight">
+                        {tagline || 'খাঁটি মশলা, প্রাকৃতিক ভোজ্য তেল ও গ্রোসারি অর্ডারিং প্ল্যাটফর্ম'}
+                      </p>
+                      <p className="text-[9px] text-slate-400 mt-1 truncate">aranyak-mobile-catalog.vercel.app</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-[11px] bg-white p-2.5 rounded-xl border border-slate-200 text-slate-600 space-y-1">
+                  <p className="font-bold text-slate-800">💡 WhatsApp-এ পুরোনো লোগো পরিবর্তন না হলে করণীয়:</p>
+                  <p>
+                    WhatsApp ও Facebook কোনো লিঙ্কের ছবি কিছু সময়ের জন্য ক্যাশ (Cache) করে রাখে। নতুন লোগো তাৎক্ষণিক দেখতে লিঙ্কের শেষে <b>?v=1</b> বা <b>?v=2</b> লিখে পাঠান (যেমন: <code className="bg-slate-100 text-emerald-700 px-1 py-0.5 rounded font-mono text-[10px]">https://aranyak-mobile-catalog.vercel.app/?v=1</code>)।
+                  </p>
+                </div>
               </div>
             </div>
           )}

@@ -8,11 +8,11 @@ import {
   Tag, 
   Check,
   Trash2,
-  Edit3
+  Edit3,
+  Upload
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Product, ProductVariant } from '../types';
-import { INITIAL_PRESET_IMAGES } from '../data/initialData';
 import { ProductVariantEditor } from './ProductVariantEditor';
 
 interface EditProductModalProps {
@@ -78,7 +78,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({ product, isO
       setPrice(product.price);
       setCostPrice(product.costPrice !== undefined ? product.costPrice : '');
       setCategory(product.category || categories[1]?.id || 'ground_spices');
-      setImage(product.image || INITIAL_PRESET_IMAGES[0].url);
+      setImage(product.image || '');
       setCustomImageUrl('');
       setStock(product.stock);
       setLowStockThreshold(product.lowStockThreshold || 5);
@@ -429,45 +429,80 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({ product, isO
           </div>
 
           {/* Image Picker */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">
-              Product Image (ছবি)
-            </label>
-            <div className="grid grid-cols-4 sm:grid-cols-7 gap-2 mb-2 max-h-28 overflow-y-auto p-1 bg-slate-50 rounded-2xl border border-slate-200">
-              {INITIAL_PRESET_IMAGES.map((preset, idx) => (
+          <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <ImageIcon className="w-4 h-4 text-indigo-600" />
+                <span>Product Image (ছবি)</span>
+              </label>
+              {(image || customImageUrl) && (
                 <button
                   type="button"
-                  key={idx}
                   onClick={() => {
-                    setImage(preset.url);
+                    setImage('');
                     setCustomImageUrl('');
                   }}
-                  className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all group ${
-                    image === preset.url && !customImageUrl
-                      ? 'border-indigo-600 ring-2 ring-indigo-300 scale-95'
-                      : 'border-transparent hover:border-slate-300'
-                  }`}
-                  title={preset.label}
+                  className="text-[11px] font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
                 >
-                  <img src={preset.url} alt={preset.label} className="w-full h-full object-cover" />
-                  {image === preset.url && !customImageUrl && (
-                    <div className="absolute inset-0 bg-indigo-600/30 flex items-center justify-center">
-                      <Check className="w-4 h-4 text-white drop-shadow-md" />
-                    </div>
-                  )}
+                  ছবি সরান
                 </button>
-              ))}
+              )}
             </div>
 
-            <div className="relative">
-              <ImageIcon className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="url"
-                value={customImageUrl}
-                onChange={(e) => setCustomImageUrl(e.target.value)}
-                placeholder="অথবা কাস্টম ছবি URL পেস্ট করুন (https://...)"
-                className="w-full pl-8.5 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:border-indigo-500"
-              />
+            <div className="flex flex-col sm:flex-row gap-3 items-start">
+              <label className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-xl border-2 border-dashed border-slate-300 hover:border-indigo-500 bg-white flex flex-col items-center justify-center overflow-hidden shrink-0 transition-colors group cursor-pointer shadow-2xs">
+                {image ? (
+                  <>
+                    <img src={image} alt="Preview" className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold text-center px-1">
+                      ছবি পরিবর্তন
+                    </div>
+                  </>
+                ) : (
+                  <div className="p-2 text-center flex flex-col items-center justify-center text-slate-400">
+                    <Upload className="w-5 h-5 mb-1 text-slate-400 group-hover:text-indigo-600 transition-colors" />
+                    <span className="text-[10px] font-bold text-slate-700">ছবি আপলোড</span>
+                    <span className="text-[8px] text-slate-400">ডিভাইস থেকে বাছুন</span>
+                  </div>
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                      const dataUrl = event.target?.result as string;
+                      setImage(dataUrl);
+                      setCustomImageUrl('');
+                    };
+                    reader.readAsDataURL(file);
+                  }}
+                  className="hidden"
+                />
+              </label>
+
+              <div className="flex-1 space-y-2 w-full">
+                <p className="text-xs text-slate-500">
+                  ডিভাইস থেকে ছবি আপলোড করুন অথবা নিচে ছবির সরাসরি লিঙ্ক পেস্ট করুন:
+                </p>
+                <div className="relative">
+                  <ImageIcon className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="url"
+                    value={customImageUrl}
+                    onChange={(e) => {
+                      setCustomImageUrl(e.target.value);
+                      if (e.target.value) {
+                        setImage(e.target.value);
+                      }
+                    }}
+                    placeholder="অথবা কাস্টম ছবি URL পেস্ট করুন (https://...)"
+                    className="w-full pl-8.5 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:bg-white focus:border-indigo-500"
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
