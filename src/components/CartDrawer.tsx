@@ -175,7 +175,7 @@ export const CartDrawer: React.FC = () => {
                       const itemTotal = unitPrice * safeQuantity;
                       const itemKey = isRealVariant ? `${product.id}-${selectedVariant.id}` : product.id;
                       const displayUnit = isRealVariant 
-                        ? (selectedVariant.unit || selectedVariant.nameBn || selectedVariant.name) 
+                        ? (selectedVariant.unit || (selectedVariant as any).nameBn || (selectedVariant as any).name || '') 
                         : product.unit;
 
                       return (

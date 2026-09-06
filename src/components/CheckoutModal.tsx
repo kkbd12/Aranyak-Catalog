@@ -172,7 +172,7 @@ export const CheckoutModal: React.FC = () => {
                   : (typeof product.price === 'number' && !isNaN(product.price) ? product.price : 0);
                 const safeQuantity = typeof quantity === 'number' && !isNaN(quantity) && quantity > 0 ? quantity : 1;
                 const displayUnit = isRealVariant 
-                  ? (selectedVariant.unit || selectedVariant.nameBn || selectedVariant.name) 
+                  ? (selectedVariant.unit || (selectedVariant as any).nameBn || (selectedVariant as any).name || '') 
                   : product.unit;
                 const itemKey = isRealVariant ? `${product.id}-${selectedVariant.id}` : product.id;
 

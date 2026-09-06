@@ -28,7 +28,7 @@ export const ProductFeed: React.FC<ProductFeedProps> = () => {
   } = useStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
 
   // Filter products by in-stock status and search query (Hide out of stock items from customer view)
   const inStockProducts = products.filter(p => {

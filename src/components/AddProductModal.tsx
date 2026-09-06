@@ -330,7 +330,7 @@ export const AddProductModal: React.FC = () => {
               }
             }}
             variants={variants}
-            onChangeVariants={(newVariants) => {
+            onChange={(newVariants) => {
               setVariants(newVariants);
               if (newVariants.length > 0) {
                 const totalStock = newVariants.reduce((sum, v) => sum + (Number(v.stock) || 0), 0);
